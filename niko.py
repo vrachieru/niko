@@ -1,36 +1,20 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import sqlite3
 import Skype4Py
 import time
-from datetime import datetime
 
-database = "niko.db"
+from config import *
+from database import *
+from log import *
+from scheduler import *
+from status import *
+from utils import *
 
-moods = {
-	-2 : {
-		"smileys" : [":'(", "(cry)"],
-		"message" : "Oh no! Please go find a sympathetic ear. Or a hug"
-	},
-	-1 : {
-		"smileys" : [":(", "(sad)"],
-		"message" : "Sorry that things aren't going well! Go find a pick-me-up."
-	},
-	0 : {
-		"smileys" : [":|"],
-		"message" : "Alright, entry stored. Carry on with your meh self."
-	},
-	1 : {
-		"smileys" : [":)"],
-		"message" : "You're a joly fellow, aren't you?!"
-	},
-	2 : {
-		"smileys" : [":D"],
-		"message" : "Hei, sunshine! The database did a little dance recording this entry."
-	}
-}
-
+SMILEYS = ':D :) :| :( :\'('
+REMINDER = 'Hei there little buddy. How\'s your day going?\n%s' % SMILEYS
+USER_NOT_FOUND = 'You\'re not on the list. Back of the line buster!'
+INVALID_RESPONSE = 'I\'m not quite sure what vibe I\'m getting. Try one of these: %s' % SMILEYS
 
 class Niko(object):
 	def __init__(self): 
@@ -42,43 +26,52 @@ class Niko(object):
 		if status == Skype4Py.apiAttachAvailable:
 			self.skype.Attach()
 
-	def SendReminder(self):
+	def SendMessageToAll(self, message):
+		LOGGER.info('Sending message to all users: %s' % message)
 		for friend in self.skype.Friends:
-			self.skype.SendMessage(friend.Handle, "Hei there little buddy. How's your day going?\n:D :) :| :( :'(")
+			self.skype.SendMessage(friend.Handle, message)
 
-	def MessageStatus(self, msg, status):
+	def MessageStatus(self, message, status):
 		if status == Skype4Py.cmsReceived:
-			msg.MarkAsSeen()
-			for mood, properties in moods.iteritems():
-				if msg.Body in properties["smileys"]:
-					userId = self.DbQuery("SELECT id from users where skype=?", (msg.Sender.Handle,))
-					todaysDate = datetime.now().strftime("%Y-%m-%d")
-					todaysMood = self.DbQuery("SELECT * from entries where userid=? and entry_date=?", (userId[0], todaysDate))
-					if todaysMood == None:
-						self.DbCommit("INSERT into entries (userid, mood, entry_date) VALUES (?, ?, ?)", (userId[0], mood, todaysDate))
-					else:
-						self.DbCommit("UPDATE entries SET mood=? WHERE id=?", (mood, todaysMood[0]))
-					msg.Chat.SendMessage(properties["message"])
-					return
-			msg.Chat.SendMessage("Not quite what I'm looking for. Try one of the suggested smileys.")
+			message.MarkAsSeen()
+			self.Message(message)
 
-	def DbQuery(self, query, args=()):
-		connection = sqlite3.connect(database)
-		cursor = connection.cursor()
-		cursor.execute(query, args)
-		return cursor.fetchone()
+	def Message(self, message):
+		LOGGER.info('Received message from %s: %s' % (message.Sender.Handle, message.Body))
+		user = findUserBySkypeId(message.Sender.Handle)
+		if user == None:
+			message.Chat.SendMessage(USER_NOT_FOUND)
+			LOGGER.warn('%s is not registered in the database' % message.Sender.Handle)
+			return
 
-	def DbCommit(self, query, args=()):
-		connection = sqlite3.connect(database)
-		connection.cursor().execute(query, args)
-		connection.commit()
+		mood = getMoodBySmiley(message.Body)
+		if mood != None:
+			setUserMood(user, mood)
+			LOGGER.info('%s is %s today' % (message.Sender.Handle, mood['smileys'][0]))
+			reply = getRandomItem(mood['messages'])
+			message.Chat.SendMessage(reply)
+			LOGGER.info('Sent reply to %s: %s' % (message.Sender.Handle, reply))
+			return
+		
+		message.Chat.SendMessage(INVALID_RESPONSE)
+		LOGGER.warn('Gibberish received from %s: %s' % (message.Sender.Handle, message.Body))
+
 
 if __name__ == "__main__":
-	bot = Niko()
-	today = datetime.now().isoweekday()
+	niko = Niko()
+
+	scheduler \
+		.every() \
+		.workday() \
+		.at(SCHEDULERS['reminder']) \
+		.do(niko.SendMessageToAll, REMINDER)
+
+	scheduler \
+		.every() \
+		.workday() \
+		.at(SCHEDULERS['yesterdaysMood']) \
+		.do(niko.SendMessageToAll, getYesterdaysMood())
 
 	while True:
-		if datetime.now().isoweekday() != today and datetime.now().isoweekday() not in [6, 7] and datetime.now().strftime("%H") == "17":
-			today = datetime.now().isoweekday()
-			bot.SendReminder()
-		time.sleep(1)
+		scheduler.run_jobs()
+		time.sleep(1.0)
