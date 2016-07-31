@@ -14,7 +14,7 @@ def today():
 
 def getMoodBySmiley(smiley):
 	for mood in MOODS.values():
-		if smiley in mood['smileys']:
+		if smiley.lower() in mood['smileys']:
 			return mood
 	return None
 
