@@ -30,7 +30,7 @@ def getMoodStatus(moodId, entry, totalEntries):
     group = list(entry)
     smiley = getMoodSmileyByScore(moodId)
     people = [g.username for g in group]
-    percent = round(len(group)/totalEntries * 100, 1)
+    percent = round((len(group)/float(totalEntries)) * 100, 1)
     return MoodStatus(smiley, people, percent)
 
 def getYesterdaysMood():
