@@ -1,0 +1,4 @@
+bottle==0.12.7
+clint==0.3.7
+Jinja2==2.7.3
+Skype4Py==1.0.35
